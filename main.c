@@ -4,10 +4,10 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "cmd.h"
+#include "cmd.c"
 
-const char* error_message = "An error has occured\n";
-#define THROW_ERR write(STDERR_FILENO, error_message, 21)
+const char* error_message = "An error has occurred\n";
+#define THROW_ERR write(STDERR_FILENO, error_message, 22)
 
 int parse(const char* line, char*** argv);
 
@@ -15,19 +15,53 @@ int main(int argc, char** argv) {
   char* line = NULL;
   size_t size; // unused (size of line mem alloc)
   ssize_t length;
+  FILE *input = stdin;
+
+  if (argc > 2) {
+    THROW_ERR;
+    exit(1);
+  }
+  if (argc == 2) {
+    input = fopen(argv[1], "r");
+    if (!input) {
+      THROW_ERR;
+      exit(1);
+    }
+  }
+
+  /* determine interactivity from the input stream (handles pipes/redir too) */
+  int interactive = isatty(fileno(input)) ? 1 : 0;
 
   // path table ended by null pointer
-  char** path = malloc(sizeof(char*));
-  *path = NULL;
+  char** path = malloc(2*sizeof(char*));
+  if (!path) { 
+    THROW_ERR; 
+    exit(1); 
+  }
+  path[0] = malloc(strlen("/bin") + 1);
+  if (!path[0]) {
+    free(path); 
+    THROW_ERR; 
+    exit(1); 
+  }
+  strcpy(path[0], "/bin");
+  path[1] = NULL;
   
   while (1) {
-    printf("wish> ");
-    length = getline(&line, &size, stdin);
+    if (interactive) printf("wish> ");
+    length = getline(&line, &size, input);
 
     if (length == -1) {
-      THROW_ERR;
-      free(line);
-      return -1;
+      if (feof(input)) {
+        free(line);
+        if (input != stdin) fclose(input);
+        exit(0);
+      } else {
+        free(line);
+        if (input != stdin) fclose(input);
+        THROW_ERR;
+        exit(1);
+      }
     }
 
     char** largv;
@@ -63,7 +97,8 @@ int parse(const char* line, char*** argv) {
   }
 
   // fill the args table
-  *argv = malloc(sizeof(char**)*n);
+  *argv = malloc(sizeof(char**)*(n+1));
+  (*argv)[n] = NULL; // null-terminate the argv table
   int j = 0;
   int offset = -1;
   for (int i = 0; line[i] != '\0'; i++) {

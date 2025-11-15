@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <dirent.h>
 
 #include "cmd.h"
 
@@ -35,28 +36,35 @@ int handle_cmd(int argc, char** argv, char*** path) {
     // else search the program in path
     char* bin;
     char** tmp = *path;
+    if (tmp == NULL) return -1;
     while (*tmp != NULL) {
-      bin = malloc(sizeof(char)*(strlen(*tmp)+1+strlen(argv[0]+1)));
+      size_t len = strlen(*tmp) + 1 /*slash*/ + strlen(argv[0]) + 1 /*\0*/;
+      bin = malloc(len);
+      if (!bin) return -1;
       strcpy(bin, *tmp);
       strcat(bin, "/");
       strcat(bin, argv[0]);
-      printf("%s\n", bin);
       if (access(bin, X_OK) == 0) {
         break;
       }
       free(bin);
+      bin = NULL;
       tmp++;
     }
 
-    if (*tmp == NULL)
+    if (bin == NULL)
       return -1;
-    printf("ok!\n");
 
     pid_t pid = fork();
-    if (pid == 0)
+    if (pid < 0) {
+      free(bin);
+      return -1;
+    } else if (pid == 0) {
       execv(bin, argv);
-    else if (pid > 0)
+      _exit(1); /* exec failed */
+    } else {
       waitpid(pid, NULL, 0);
+    }
 
     free(bin);
     return 0;
@@ -83,11 +91,13 @@ CMD(path) {
   free(*path);
 
   *path = malloc(sizeof(char*)*(argc+1));
+  if (!*path) return -1;
   for (int i = 0; i < argc; i++) {
     (*path)[i] = malloc(sizeof(char)*(strlen(argv[i])+1));
+    if (!(*path)[i]) return -1;
     strcpy((*path)[i], argv[i]);
   }
-  path[argc] = NULL;
+  (*path)[argc] = NULL;
 
   return 0;
 }
@@ -113,6 +123,40 @@ CMD(nix_path) {
   free(nargv);
   return r;
 }
+
+/*
+CMD(ls) {
+  // Supporte : ls               -> liste le répertoire courant
+  //            ls dir1 dir2 ... -> liste chaque répertoire donné
+  if (argc == 0) {
+    const char *dir = ".";
+    DIR *d = opendir(dir);
+    if (!d) return -1;
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL) {
+      // if (entry->d_name[0] == '.') continue;  pour ignorer fichier cachés
+      if (strcmp(entry->d_name, ".") == 0) continue; // ignore répertoire courant
+      if (strcmp(entry->d_name, "..") == 0) continue; // ignore répertoire parent
+      printf("%s\n", entry->d_name);
+    }
+    closedir(d);
+    return 0;
+  }
+
+  for (int i = 0; i < argc; i++) {
+    DIR *d = opendir(argv[i]);
+    if (!d) return -1;
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL) {
+      if (strcmp(entry->d_name, ".") == 0) continue;
+      if (strcmp(entry->d_name, "..") == 0) continue;
+      printf("%s\n", entry->d_name);
+    }
+    closedir(d);
+  }
+  return 0;
+}
+*/
 
 CMD(cwd) {
   if (argc != 0)
