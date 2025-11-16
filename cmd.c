@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <dirent.h>
+#include <fcntl.h>
 
 #include "cmd.h"
 
@@ -27,16 +28,20 @@ const struct cmd cmds[] = {
 };
 #define CMDS_SIZE sizeof(cmds)/sizeof(struct cmd)
 
-int handle_cmd(int argc, char** argv, char*** path) {
+int handle_cmd(int argc, char** argv, char*** path, const char *outfile) {
     // match built-in command
-    for (int i = 0; i < CMDS_SIZE; i++)
-      if (strcmp(argv[0], cmds[i].name) == 0)
+    for (int i = 0; i < CMDS_SIZE; i++){
+      if (strcmp(argv[0], cmds[i].name) == 0){
+        if (outfile != NULL) return -1;  
         return cmds[i].func(argc-1, argv+1, path);
+      }
+    }
 
     // else search the program in path
-    char* bin;
+    char* bin = NULL;
+    if (path == NULL || *path == NULL) return -1;
     char** tmp = *path;
-    if (tmp == NULL) return -1;
+
     while (*tmp != NULL) {
       size_t len = strlen(*tmp) + 1 /*slash*/ + strlen(argv[0]) + 1 /*\0*/;
       bin = malloc(len);
@@ -60,6 +65,14 @@ int handle_cmd(int argc, char** argv, char*** path) {
       free(bin);
       return -1;
     } else if (pid == 0) {
+      // child: apply redirection if requested
+      if (outfile) {
+        int fd = open(outfile, O_CREAT | O_WRONLY | O_TRUNC, 0666);
+        if (fd < 0) _exit(1);
+        if (dup2(fd, STDOUT_FILENO) < 0) _exit(1);
+        if (dup2(fd, STDERR_FILENO) < 0) _exit(1);
+        close(fd);
+      }
       execv(bin, argv);
       _exit(1); /* exec failed */
     } else {
@@ -83,18 +96,29 @@ CMD(cd) {
 }
 
 CMD(path) {
-  char** tmp = *path;
-  while (*tmp != NULL) {
-    free(*tmp);
-    tmp++;
+  // free old path table if any 
+  if (*path != NULL) {
+    char** tmp = *path;
+    for (; *tmp != NULL; tmp++) {
+      free(*tmp);
+    }
+    free(*path);
+    *path = NULL;
   }
-  free(*path);
 
+  // allocate new table (argc entries + terminating NULL) 
   *path = malloc(sizeof(char*)*(argc+1));
   if (!*path) return -1;
+
   for (int i = 0; i < argc; i++) {
     (*path)[i] = malloc(sizeof(char)*(strlen(argv[i])+1));
-    if (!(*path)[i]) return -1;
+    if (!(*path)[i]) {
+      // cleanup already allocated entries
+      for (int j = 0; j < i; j++) free((*path)[j]);
+      free(*path);
+      *path = NULL;
+      return -1;
+    }
     strcpy((*path)[i], argv[i]);
   }
   (*path)[argc] = NULL;
@@ -123,40 +147,6 @@ CMD(nix_path) {
   free(nargv);
   return r;
 }
-
-/*
-CMD(ls) {
-  // Supporte : ls               -> liste le répertoire courant
-  //            ls dir1 dir2 ... -> liste chaque répertoire donné
-  if (argc == 0) {
-    const char *dir = ".";
-    DIR *d = opendir(dir);
-    if (!d) return -1;
-    struct dirent *entry;
-    while ((entry = readdir(d)) != NULL) {
-      // if (entry->d_name[0] == '.') continue;  pour ignorer fichier cachés
-      if (strcmp(entry->d_name, ".") == 0) continue; // ignore répertoire courant
-      if (strcmp(entry->d_name, "..") == 0) continue; // ignore répertoire parent
-      printf("%s\n", entry->d_name);
-    }
-    closedir(d);
-    return 0;
-  }
-
-  for (int i = 0; i < argc; i++) {
-    DIR *d = opendir(argv[i]);
-    if (!d) return -1;
-    struct dirent *entry;
-    while ((entry = readdir(d)) != NULL) {
-      if (strcmp(entry->d_name, ".") == 0) continue;
-      if (strcmp(entry->d_name, "..") == 0) continue;
-      printf("%s\n", entry->d_name);
-    }
-    closedir(d);
-  }
-  return 0;
-}
-*/
 
 CMD(cwd) {
   if (argc != 0)

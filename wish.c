@@ -66,15 +66,56 @@ int main(int argc, char** argv) {
 
     char** largv;
     int largc = parse(line, &largv);
-    
+
     if (largc == 0) // no args
       continue;
-    if (handle_cmd(largc, largv, &path) == -1)
+
+    const char *outfile = NULL;
+    int redir_pos = -1;
+
+    // check pour présence de '>' dans largv
+    for (int i = 0; i < largc; ++i) {
+        if (strcmp(largv[i], ">") == 0) {
+            if (redir_pos != -1) { 
+              THROW_ERR;
+              for (int k = 0; k < largc; k++) free(largv[k]);
+              free(largv);
+              goto next_iteration;
+            }
+            redir_pos = i;
+        }
+    }
+
+    if (redir_pos != -1) {
+        // syntaxe: il faut au moins un token avant et un token après, et rien après le nom de fichier 
+        if (redir_pos == 0 || redir_pos + 1 >= largc || redir_pos + 2 != largc) {
+            THROW_ERR;
+            for (int k = 0; k < largc; k++) free(largv[k]);
+            free(largv);
+            goto next_iteration;
+        }
+        char *outfile = largv[redir_pos + 1];
+        // tronquer argv pour exec : mettre NULL à la place de '>'
+        outfile = largv[redir_pos + 1];
+        largv[redir_pos] = NULL;
+        largc = redir_pos;
+        // passer outfile à handle_cmd (voir option ci‑dessous)
+    }
+        
+    if (handle_cmd(largc, largv, &path, outfile) == -1)
       THROW_ERR;
     
     for (int i = 0; i < largc; i++)
       free(largv[i]);
+
+    // free the outfile string stored at position redir_pos+1
+    if (redir_pos != -1) {
+      free(largv[redir_pos + 1]);
+    }
     free(largv);
+    
+    next_iteration:
+    continue;
   }
 }
 
