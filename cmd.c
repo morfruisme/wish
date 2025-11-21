@@ -3,129 +3,160 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 
 #include "cmd.h"
 
-#define CMD(name) int cmd_##name(int argc, char** argv, char*** path)
-CMD(exit);
-CMD(cd);
-CMD(path);
-CMD(nix_path);
-CMD(cwd);
-CMD(echo);
+// prototype for built-in commands implemetation
+#define DECLARE_CMD(name) int cmd_##name(int argc, char** argv, char*** path)
+DECLARE_CMD(exit);
+DECLARE_CMD(cd);
+DECLARE_CMD(path);
 
+// table of builtin-in commands name and their associated implementation
 typedef int (*cmd_t)(int, char**, char***);
 struct cmd { const char* name; const cmd_t func; };
 const struct cmd cmds[] = {
   { "exit", cmd_exit },
   { "cd",   cmd_cd   },
   { "path", cmd_path },
-  { "nix-path", cmd_nix_path }, // to not have to load path everytime
-  // { "cwd",  cmd_cwd  },
-  // { "echo", cmd_echo },
 };
 #define CMDS_SIZE sizeof(cmds)/sizeof(struct cmd)
 
-int handle_cmd(int argc, char** argv, char*** path) {
-    // match built-in command
-    for (int i = 0; i < CMDS_SIZE; i++)
-      if (strcmp(argv[0], cmds[i].name) == 0)
+// returns -1 on error, 0 on builtin command, pid of the child process otherwise
+int handle_cmd(int argc, char** argv, char*** path, const char* outfile) {
+    if (argc == 0) // empty command
+      return 0;
+  
+    // -- match built-in command
+    for (int i = 0; i < CMDS_SIZE; i++){
+      if (strcmp(argv[0], cmds[i].name) == 0){
+        if (outfile != NULL) return -1; // ??? pq pas
         return cmds[i].func(argc-1, argv+1, path);
-
-    // else search the program in path
-    char* bin;
-    char** tmp = *path;
-    while (*tmp != NULL) {
-      bin = malloc(sizeof(char)*(strlen(*tmp)+1+strlen(argv[0]+1)));
-      strcpy(bin, *tmp);
-      strcat(bin, "/");
-      strcat(bin, argv[0]);
-      printf("%s\n", bin);
-      if (access(bin, X_OK) == 0) {
-        break;
       }
-      free(bin);
-      tmp++;
     }
 
-    if (*tmp == NULL)
-      return -1;
-    printf("ok!\n");
+    // -- else search the binary in path
+    char* bin; // holds full path to the binary once found
+    char** tmp = *path; // non null
 
+    for (; *tmp != NULL; tmp++) { // null terminated
+      // format <path>/<name>\0
+      size_t len = strlen(*tmp) + 1 + strlen(argv[0]) + 1;
+      bin = malloc(sizeof(char)*len);
+      if (!bin) return -1;
+      sprintf(bin, "%s/%s", *tmp, argv[0]);
+ 
+      if (access(bin, X_OK) == 0) break;
+      free(bin);
+    }
+
+    if (*tmp == NULL) return -1; // binary not found
+
+    // -- execute the binary in child process
     pid_t pid = fork();
-    if (pid == 0)
+    if (pid < 0) { // error
+      free(bin);
+      return -1;
+    }
+    else if (pid == 0) { // child process
+      // _exit(1) on error to not disturb parent process
+      if (outfile) {
+        int fd = open(outfile, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        if (fd < 0) _exit(1);
+        // redirect stdout and stderr to the output file
+        if (dup2(fd, STDOUT_FILENO) < 0) _exit(1);
+        if (dup2(fd, STDERR_FILENO) < 0) _exit(1);
+        close(fd);
+      }
       execv(bin, argv);
-    else if (pid > 0)
-      waitpid(pid, NULL, 0);
-
-    free(bin);
-    return 0;
+      _exit(1);
+    }
+    else { // parent process
+      free(bin);
+      return pid;
+    }
 }
 
-CMD(exit) {
+DECLARE_CMD(exit) {
   if (argc != 0)
     return -1;
   exit(0);
 }
 
-CMD(cd) {
+DECLARE_CMD(cd) {
   if (argc != 1 || chdir(argv[0]) == -1)
     return -1;
   return 0;
 }
 
-CMD(path) {
-  char** tmp = *path;
-  while (*tmp != NULL) {
+DECLARE_CMD(path) {
+  // -- generate new path
+  char** new_path = copy_null_terminate(argc, argv);
+  if (new_path == NULL) return -1;
+  
+  // -- free old path
+  for (char** tmp = *path; *tmp != NULL; tmp++) // null terminated
     free(*tmp);
-    tmp++;
-  }
   free(*path);
+  
+  // -- set new path
+  *path = new_path;
+  return 0;
+}
 
-  *path = malloc(sizeof(char*)*(argc+1));
-  for (int i = 0; i < argc; i++) {
-    (*path)[i] = malloc(sizeof(char)*(strlen(argv[i])+1));
-    strcpy((*path)[i], argv[i]);
+// copy old array into a null terminated heap allocated new one
+char** copy_null_terminate(int n, char** old) {
+  char** new = malloc(sizeof(char*)*(n+1));
+  if (new == NULL) return NULL;
+
+  for (int i = 0; i < n; i++) {
+    new[i] = malloc(sizeof(char)*(strlen(old[i])+1));
+    if (new[i] == NULL) {
+      // free previous allocations
+      for (int j = 0; j <= i; j++)
+        free(new[j]);
+      free(new);
+      return NULL;
+    }
+    else
+      strcpy(new[i], old[i]);
   }
-  path[argc] = NULL;
+  new[n] = NULL; // null terminate
 
-  return 0;
+  return new;
 }
 
-#define USER "fruit"
-CMD(nix_path) {
-  char** nargv = malloc(sizeof(char*)*(2+argc+1));
-  nargv[0] = malloc(sizeof(char)*40);
-  strcpy(nargv[0], "/run/current-system/sw/bin");
-  nargv[1] = malloc(sizeof(char)*40);
-  strcpy(nargv[1], "/etc/profiles/per-user/"USER"/bin");
+// char** merge_null_terminate(int n, char** a, int m, char** b) {
+//   char** new = malloc(sizeof(char*)*(n+m+1));
+//   if (new == NULL) return NULL;
 
-  for (int i = 0; i < argc; i++) {
-    nargv[2+i] = malloc(sizeof(char)*(strlen(argv[i])+1));
-    strcpy(nargv[2+i], argv[i]);
-  }
-  nargv[2+argc] = NULL;
+//   for (int i = 0; i < n; i++) {
+//     new[i] = malloc(sizeof(char)*(strlen(a[i])+1));
+//     if (new[i] == NULL) {
+//       // free previous allocations
+//       for (int j = 0; j <= i; j++)
+//         free(new[j]);
+//       free(new);
+//       return NULL;
+//     }
+//     else
+//       strcpy(new[i], a[i]);
+//   }
 
-  // pass to cmd_path
-  int r = cmd_path(2+argc, nargv, path);
-  for (int i = 0; i < 2+argc; i++)
-    free(nargv[i]);
-  free(nargv);
-  return r;
-}
+//   for (int i = 0; i < m; i++) {
+//     new[n+i] = malloc(sizeof(char)*(strlen(b[i])+1));
+//     if (new[n+i] == NULL) {
+//       // free previous allocations
+//       for (int j = 0; j <= n+i; j++)
+//         free(new[j]);
+//       free(new);
+//       return NULL;
+//     }
+//     else
+//       strcpy(new[n+i], b[i]);
+//   }
 
-CMD(cwd) {
-  if (argc != 0)
-    return -1;
-  char* cwd = getcwd(NULL, 0);
-  printf("%s\n", cwd);
-  free(cwd);
-  return 0;
-}
-
-CMD(echo) {
-  for (int i = 0; i < argc; i++)
-    printf("%s ", argv[i]);
-  printf("\n");
-  return 0;
-}
+//   new[n+m] = NULL; // null terminate
+//   return new;
+// }
