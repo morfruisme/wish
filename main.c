@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
   char* default_path[] = { "/run/current-system/sw/bin", "/etc/profiles/per-user/"NIX_USER"/bin" };
   #endif
 
-  char** path = copy_null_terminated(sizeof(default_path)/sizeof(char*), default_path);
+  char** path = copy_null_terminate(sizeof(default_path)/sizeof(char*), default_path);
   if (path == NULL) ERR_AND_EXIT
 
   // -- read line by line

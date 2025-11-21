@@ -12,7 +12,6 @@
 DECLARE_CMD(exit);
 DECLARE_CMD(cd);
 DECLARE_CMD(path);
-DECLARE_CMD(nix_path);
 
 // table of builtin-in commands name and their associated implementation
 typedef int (*cmd_t)(int, char**, char***);
@@ -21,8 +20,6 @@ const struct cmd cmds[] = {
   { "exit", cmd_exit },
   { "cd",   cmd_cd   },
   { "path", cmd_path },
-  // TODO: remove ?
-  { "nix-path", cmd_nix_path }, // to not have to load path everytime
 };
 #define CMDS_SIZE sizeof(cmds)/sizeof(struct cmd)
 
@@ -42,7 +39,7 @@ int handle_cmd(int argc, char** argv, char*** path, const char* outfile) {
     for (; *tmp != NULL; tmp++) { // null terminated
       // format <path>/<name>\0
       size_t len = strlen(*tmp) + 1 + strlen(argv[0]) + 1;
-      bin = malloc(len);
+      bin = malloc(sizeof(char)*len);
       if (!bin) return -1;
       sprintf(bin, "%s/%s", *tmp, argv[0]);
  
@@ -92,7 +89,7 @@ DECLARE_CMD(cd) {
 
 DECLARE_CMD(path) {
   // -- generate new path
-  char** new_path = copy_null_terminated(argc, argv);
+  char** new_path = copy_null_terminate(argc, argv);
   if (new_path == NULL) return -1;
   
   // -- free old path
@@ -106,12 +103,12 @@ DECLARE_CMD(path) {
 }
 
 // copy old array into a null terminated heap allocated new one
-char** copy_null_terminated(int n, char** old) {
+char** copy_null_terminate(int n, char** old) {
   char** new = malloc(sizeof(char*)*(n+1));
   if (new == NULL) return NULL;
 
   for (int i = 0; i < n; i++) {
-    new[i] = malloc(sizeof(char)*strlen(old[i])+1);
+    new[i] = malloc(sizeof(char)*(strlen(old[i])+1));
     if (new[i] == NULL) {
       // free previous allocations
       for (int j = 0; j <= i; j++)
@@ -127,26 +124,36 @@ char** copy_null_terminated(int n, char** old) {
   return new;
 }
 
+// char** merge_null_terminate(int n, char** a, int m, char** b) {
+//   char** new = malloc(sizeof(char*)*(n+m+1));
+//   if (new == NULL) return NULL;
 
-// TODO: replace
-#define USER "fruit"
-DECLARE_CMD(nix_path) {
-  char** nargv = malloc(sizeof(char*)*(2+argc+1));
-  nargv[0] = malloc(sizeof(char)*40);
-  strcpy(nargv[0], "/run/current-system/sw/bin");
-  nargv[1] = malloc(sizeof(char)*40);
-  strcpy(nargv[1], "/etc/profiles/per-user/"USER"/bin");
+//   for (int i = 0; i < n; i++) {
+//     new[i] = malloc(sizeof(char)*(strlen(a[i])+1));
+//     if (new[i] == NULL) {
+//       // free previous allocations
+//       for (int j = 0; j <= i; j++)
+//         free(new[j]);
+//       free(new);
+//       return NULL;
+//     }
+//     else
+//       strcpy(new[i], a[i]);
+//   }
 
-  for (int i = 0; i < argc; i++) {
-    nargv[2+i] = malloc(sizeof(char)*(strlen(argv[i])+1));
-    strcpy(nargv[2+i], argv[i]);
-  }
-  nargv[2+argc] = NULL;
+//   for (int i = 0; i < m; i++) {
+//     new[n+i] = malloc(sizeof(char)*(strlen(b[i])+1));
+//     if (new[n+i] == NULL) {
+//       // free previous allocations
+//       for (int j = 0; j <= n+i; j++)
+//         free(new[j]);
+//       free(new);
+//       return NULL;
+//     }
+//     else
+//       strcpy(new[n+i], b[i]);
+//   }
 
-  // pass to cmd_path
-  int r = cmd_path(2+argc, nargv, path);
-  for (int i = 0; i < 2+argc; i++)
-    free(nargv[i]);
-  free(nargv);
-  return r;
-}
+//   new[n+m] = NULL; // null terminate
+//   return new;
+// }
