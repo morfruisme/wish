@@ -3,49 +3,42 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
-#include "cmd.c"
+#include "cmd.h"
 
 const char* error_message = "An error has occurred\n";
-#define THROW_ERR write(STDERR_FILENO, error_message, 22)
+#define ERR write(STDERR_FILENO, error_message, 22);
+#define THROW_ERR ERR
+#define DO_ERR_AND_EXIT(stuff) { stuff ERR; exit(1); }
+#define ERR_AND_EXIT DO_ERR_AND_EXIT()
 
 int parse(const char* line, char*** argv);
 
 int main(int argc, char** argv) {
+  // -- interactive / batch file mode
+  int interactive = 1;
+  FILE* input = stdin;
+
+  if (argc == 1);
+  else if (argc == 2 && (input = fopen(argv[1], "r"))) // valid source file
+    interactive = 0;
+  else ERR_AND_EXIT
+  
+  // -- set up path table
+  #ifndef NIX_USER
+  char* default_path[] = { "/bin" };
+  #else
+  char* default_path[] = { "/run/current-system/sw/bin", "/etc/profiles/per-user/"NIX_USER"/bin" };
+  #endif
+
+  char** path = copy_null_terminated(sizeof(default_path)/sizeof(char*), default_path);
+  if (path == NULL) ERR_AND_EXIT
+
+  // -- read line by line
   char* line = NULL;
-  size_t size = 0; // unused (size of line mem alloc)
+  size_t size = 0; // unused (size of memory allocated for line)
   ssize_t length;
-  FILE *input = stdin;
-
-  if (argc > 2) {
-    THROW_ERR;
-    exit(1);
-  }
-  if (argc == 2) {
-    input = fopen(argv[1], "r");
-    if (!input) {
-      THROW_ERR;
-      exit(1);
-    }
-  }
-
-  /* determine interactivity from the input stream (handles pipes/redir too) */
-  int interactive = isatty(fileno(input)) ? 1 : 0;
-
-  // path table ended by null pointer
-  char** path = malloc(2*sizeof(char*));
-  if (!path) { 
-    THROW_ERR; 
-    exit(1); 
-  }
-  path[0] = malloc(strlen("/bin") + 1);
-  if (!path[0]) {
-    free(path); 
-    THROW_ERR; 
-    exit(1); 
-  }
-  strcpy(path[0], "/bin");
-  path[1] = NULL;
   
   while (1) {
     if (interactive) printf("wish> ");
@@ -56,12 +49,10 @@ int main(int argc, char** argv) {
         free(line);
         if (input != stdin) fclose(input);
         exit(0);
-      } else {
+      } else DO_ERR_AND_EXIT(
         free(line);
         if (input != stdin) fclose(input);
-        THROW_ERR;
-        exit(1);
-      }
+      )
     }
 
     char** slargv;
