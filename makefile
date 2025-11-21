@@ -1,3 +1,5 @@
+SHELL := /usr/bin/env bash
+
 # usage : make nix_user=<user> for nixos, else omit
 all:
 	if [[ -z "$(nix_user)" ]];\
