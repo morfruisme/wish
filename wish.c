@@ -3,8 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
-#include "cmd.c"
+#include "cmd.h"
 
 const char* error_message = "An error has occurred\n";
 #define THROW_ERR write(STDERR_FILENO, error_message, 22)
